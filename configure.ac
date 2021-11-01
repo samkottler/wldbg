@@ -55,7 +55,7 @@ if test "x$HAVE_WAYLAND_CLIENT" != "xyes"; then
 	AC_MSG_ERROR([Need wayland-client libraries to compile])
 fi
 
-AC_CHECK_HEADER([wayland-version.h],,
+AC_CHECK_HEADER([wayland/wayland-version.h],,
 		AC_MSG_ERROR([Need wayland-version.h header file]))
 
 AC_ARG_ENABLE(debug,

@@ -11,5 +11,14 @@ passes/*.la
 src/wldbg
 m4/
 config*
-.gitignore
-
+.kdev4/
+Makefile
+Makefile.in
+wldbg.kdev4
+.deps
+.libs
+aclocal.m4
+autom4te.cache/
+libtool
+src/wldbg.pc
+stamp-h1
