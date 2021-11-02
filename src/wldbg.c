@@ -53,6 +53,8 @@
 #include "wayland/wayland-os.h"
 #include "util.h"
 
+#include "fuzz-pass.h"
+
 #ifdef DEBUG
 void
 debug_init(void);
@@ -228,7 +230,7 @@ wldbg_dispatch(struct wldbg *wldbg)
 	assert(!wldbg->flags.exit);
 	assert(!wldbg->flags.error);
 
-	n = epoll_wait(wldbg->epoll_fd, &ev, 1, -1);
+	n = epoll_wait(wldbg->epoll_fd, &ev, 1, 10);
 
 	if (n < 0) {
 		/* don't print error when we has been interrupted
@@ -239,6 +241,9 @@ wldbg_dispatch(struct wldbg *wldbg)
 		perror("epoll_wait");
 		return -1;
 	}
+	else if (n == 0) {
+        return 1;
+    }
 
 	cb = ev.data.ptr;
 	assert(cb && "No callback set in event");
@@ -727,6 +732,8 @@ wldbg_init(struct wldbg *wldbg)
 	 * processing time when we don't need it */
 	if (wldbg_add_resolve_pass(wldbg) < 0)
 		goto err_signals;
+    if (wldbg_add_fuzz_pass(wldbg) < 0)
+        goto err_signals;
 
 	return 0;
 

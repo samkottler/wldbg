@@ -13,7 +13,8 @@ wayland_files =				\
 hardcoded_passes =			\
 	list-pass.c			\
 	resolve-pass.c			\
-	objinfo-pass.c
+	objinfo-pass.c			\
+	fuzz-pass.c
 
 interactive_sources =				\
 	interactive/interactive.c		\
@@ -61,7 +62,8 @@ include_HEADERS = 		\
 	wldbg.h			\
 	wldbg-pass.h		\
 	wldbg-objects-info.h	\
-	wldbg-parse-message.h
+	wldbg-parse-message.h	\
+	fuzz-pass.h
 
 AM_CPPFLAGS =			\
 	-I$(top_srcdir)		\
