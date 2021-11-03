@@ -11,20 +11,20 @@
 
 static struct {
     uint32_t keyboard_entered;
+    uint32_t pointer_entered;
     uint32_t has_sent;
     uint32_t timestamp;
     uint32_t actual_time;
     uint32_t serial_number;
+    uint32_t surface_id; //TODO: Maybe could be multiple surfaces?
+    uint32_t pointer_id;
+    uint32_t keyboad_id;
     unsigned long last_msg_nanos;
     unsigned char buttons[KEY_MAX];
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
-    fuzz.keyboard_entered = 0;
-    fuzz.has_sent = 0;
-    for (int i = 0; i < KEY_MAX; ++i) {
-        fuzz.buttons[i] = 0;
-    }
+    memset(&fuzz, 0, sizeof(fuzz));
     return 0;
 }
 
@@ -33,31 +33,61 @@ static int fuzz_in(void *user_data, struct wldbg_message *message) {
     if (!wldbg_resolve_message(message, &rm)) {
         return PASS_NEXT;
     }
-    if (message->from == CLIENT) {
-        return PASS_NEXT;
-    }
-    char* interface_name = "wl_keyboard";
-    if (strncmp(rm.wl_interface->name, interface_name, strlen(interface_name))) {
-//         printf("%s\n", rm.wl_interface->name);
-        return PASS_NEXT;
-    }
+
     uint32_t *buf = message->data;
     uint32_t opcode = buf[1] & 0xffff;
-    if (opcode == 1) {
-        //TODO: update fuzz.key_status
-        fuzz.keyboard_entered = 1;
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        fuzz.last_msg_nanos = ts.tv_nsec;
-        fuzz.serial_number = buf[2];
+
+    if (strncmp(rm.wl_interface->name, "wl_keyboard", strlen("wl_keyboard")) == 0) {
+        if (opcode == 1) {
+            //TODO: update fuzz.key_status
+            fuzz.keyboard_entered = 1;
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            fuzz.last_msg_nanos = ts.tv_nsec;
+            fuzz.serial_number = buf[2];
+        }
+        if (opcode == 2) {
+            fuzz.keyboard_entered = 0;
+        }
     }
-    if (opcode == 2) {
-        fuzz.keyboard_entered = 0;
+    if (strncmp(rm.wl_interface->name, "wl_pointer", strlen("wl_pointer")) == 0) {
+        if (opcode == 0) {
+            fuzz.pointer_id = 1;
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            fuzz.last_msg_nanos = ts.tv_nsec;
+            fuzz.serial_number = buf[2];
+        }
+        if (opcode == 1) {
+            fuzz.keyboard_entered = 0;
+        }
     }
+
     return PASS_NEXT;
 }
 
 static int fuzz_out(void *user_data, struct wldbg_message *message) {
+    struct wldbg_resolved_message rm;
+    if (!wldbg_resolve_message(message, &rm)) {
+        return PASS_NEXT;
+    }
+
+    uint32_t *buf = message->data;
+    uint32_t opcode = buf[1] & 0xffff;
+
+    if (strncmp(rm.wl_interface->name, "wl_compositor", strlen("wl_compositor")) == 0) {
+        if (opcode == 0) {
+            fuzz.surface_id = buf[2];
+        }
+    }
+    else if (strncmp(rm.wl_interface->name, "wl_seat", strlen("wl_seat")) == 0) {
+        if (opcode == 0) {
+            fuzz.pointer_id = buf[2];
+        }
+        else if (opcode == 1) {
+            fuzz.keyboad_id = buf[2];
+        }
+    }
     return PASS_NEXT;
 }
 
@@ -106,7 +136,7 @@ static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsig
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
-    buffer[0] = 3;//TODO: dont hard code - may be different for different compositor/application
+    buffer[0] = fuzz.keyboad_id;
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
     buffer[3] = 0;
@@ -141,7 +171,7 @@ static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsi
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
-    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
     buffer[3] = 0;
@@ -174,7 +204,7 @@ static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
     struct wldbg_message send_message;
     uint32_t buffer[2];
     uint32_t size = sizeof(buffer);
-    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 5;
 
     send_message.connection = wldbg->message.connection;
@@ -196,17 +226,17 @@ static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
     return 0;
 }
 
-static int wldbg_fuzz_keyboard_enter(struct wldbg* wldbg, unsigned int x, unsigned int y) {
-    if (!fuzz.keyboard_entered) {
+static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigned int y) {
+    if (!fuzz.surface_id || fuzz.pointer_entered) {
         return -1;
     }
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
-    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 0;
     buffer[2] = fuzz.serial_number;
-    buffer[3] = 24; //TODO: dont hard code - may be different for different compositor/application
+    buffer[3] = fuzz.surface_id;
     buffer[4] = x << 8;
     buffer[5] = y << 8;
 
@@ -225,6 +255,9 @@ static int wldbg_fuzz_keyboard_enter(struct wldbg* wldbg, unsigned int x, unsign
         perror("wl_connection_flush");
         return -1;
     }
+
+    fuzz.pointer_entered = 1;
+
     wldbg_message_print(&send_message);
     return 0;
 }
@@ -232,7 +265,7 @@ static int wldbg_fuzz_keyboard_enter(struct wldbg* wldbg, unsigned int x, unsign
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
     static uint32_t pressed = 1;
     if ((fuzz.has_sent && fuzz.buttons[BTN_LEFT]) ||!fuzz.has_sent) {
-        if (wldbg_fuzz_keyboard_enter(wldbg, 45, 250) == 0) {
+        if (wldbg_fuzz_pointer_enter(wldbg, 45, 250) == 0) {
             fuzz.serial_number ++;
             if (wldbg_fuzz_send_button(wldbg, BTN_LEFT, pressed) == 0) {
                 wldbg_fuzz_end_pointer_frame(wldbg);
