@@ -599,6 +599,8 @@ wldbg_run(struct wldbg *wldbg)
 
 	wldbg->flags.running = 1;
 
+    int pressed = 0;
+
 	while((ret = wldbg_dispatch(wldbg)) > 0) {
 		if (wldbg->flags.error) {
 			dbg("Exiting for error flag");
@@ -611,6 +613,8 @@ wldbg_run(struct wldbg *wldbg)
 			ret = 0;
 			break;
 		}
+
+		wldbg_fuzz_send_next(wldbg);
 	}
 
 	wldbg->flags.running = 0;
