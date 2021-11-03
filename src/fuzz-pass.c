@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <time.h>
+#include <linux/input-event-codes.h>
 
 #include "wldbg-private.h"
 #include "wldbg-pass.h"
@@ -15,14 +16,14 @@ static struct {
     uint32_t actual_time;
     uint32_t serial_number;
     unsigned long last_msg_nanos;
-    unsigned char key_status[256];
+    unsigned char buttons[KEY_MAX];
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
     fuzz.keyboard_entered = 0;
     fuzz.has_sent = 0;
-    for (int i = 0; i < 256; ++i){
-        fuzz.key_status[i] = 0;
+    for (int i = 0; i < KEY_MAX; ++i) {
+        fuzz.buttons[i] = 0;
     }
     return 0;
 }
@@ -96,16 +97,16 @@ int wldbg_add_fuzz_pass(struct wldbg* wldbg) {
     return 0;
 }
 
-static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned char key, unsigned char pressed) {
+static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsigned char pressed) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (!fuzz.keyboard_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000){
+    if (!fuzz.keyboard_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
         return -1;
     }
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
-    buffer[0] = 3;
+    buffer[0] = 3;//TODO: dont hard code - may be different for different compositor/application
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
     buffer[3] = 0;
@@ -131,16 +132,117 @@ static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned char key, unsi
     return 0;
 }
 
+static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsigned char pressed) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (!fuzz.keyboard_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
+        return -1;
+    }
+    struct wldbg_message send_message;
+    uint32_t buffer[6];
+    uint32_t size = sizeof(buffer);
+    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[1] = (size << 16) | 3;
+    buffer[2] = ++(fuzz.serial_number);
+    buffer[3] = 0;
+    buffer[4] = button;
+    buffer[5] = pressed;
+
+    send_message.connection = wldbg->message.connection;
+    send_message.data = buffer;
+    send_message.size = size;
+    send_message.from = SERVER;
+
+    struct wl_connection *conn = wldbg->message.connection->client.connection;
+
+    if (wl_connection_write(conn, buffer, size) < 0) {
+        perror("Writing message to connection");
+        return -1;
+    }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+    wldbg_message_print(&send_message);
+    return 0;
+}
+
+static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
+    if (!fuzz.keyboard_entered) {
+        return -1;
+    }
+    struct wldbg_message send_message;
+    uint32_t buffer[2];
+    uint32_t size = sizeof(buffer);
+    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[1] = (size << 16) | 5;
+
+    send_message.connection = wldbg->message.connection;
+    send_message.data = buffer;
+    send_message.size = size;
+    send_message.from = SERVER;
+
+    struct wl_connection *conn = wldbg->message.connection->client.connection;
+
+    if (wl_connection_write(conn, buffer, size) < 0) {
+        perror("Writing message to connection");
+        return -1;
+    }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+    wldbg_message_print(&send_message);
+    return 0;
+}
+
+static int wldbg_fuzz_keyboard_enter(struct wldbg* wldbg, unsigned int x, unsigned int y) {
+    if (!fuzz.keyboard_entered) {
+        return -1;
+    }
+    struct wldbg_message send_message;
+    uint32_t buffer[6];
+    uint32_t size = sizeof(buffer);
+    buffer[0] = 20; //TODO: dont hard code - may be different for different compositor/application
+    buffer[1] = (size << 16) | 0;
+    buffer[2] = fuzz.serial_number;
+    buffer[3] = 24; //TODO: dont hard code - may be different for different compositor/application
+    buffer[4] = x << 8;
+    buffer[5] = y << 8;
+
+    send_message.connection = wldbg->message.connection;
+    send_message.data = buffer;
+    send_message.size = size;
+    send_message.from = SERVER;
+
+    struct wl_connection *conn = wldbg->message.connection->client.connection;
+
+    if (wl_connection_write(conn, buffer, size) < 0) {
+        perror("Writing message to connection");
+        return -1;
+    }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+    wldbg_message_print(&send_message);
+    return 0;
+}
+
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
     static uint32_t pressed = 1;
-    if ((fuzz.has_sent && fuzz.key_status[2]) ||!fuzz.has_sent) {
-        if (wldbg_fuzz_send_keyboard(wldbg, 2, pressed) == 0) {
-            fuzz.key_status[2] = pressed;
-            pressed = 1 - pressed;
-            fuzz.has_sent = 1;
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            fuzz.last_msg_nanos = ts.tv_nsec;
+    if ((fuzz.has_sent && fuzz.buttons[BTN_LEFT]) ||!fuzz.has_sent) {
+        if (wldbg_fuzz_keyboard_enter(wldbg, 45, 250) == 0) {
+            fuzz.serial_number ++;
+            if (wldbg_fuzz_send_button(wldbg, BTN_LEFT, pressed) == 0) {
+                wldbg_fuzz_end_pointer_frame(wldbg);
+                fuzz.buttons[BTN_LEFT] = pressed;
+                pressed = 1 - pressed;
+                fuzz.has_sent = 1;
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                fuzz.last_msg_nanos = ts.tv_nsec;
+            }
         }
     }
 }
