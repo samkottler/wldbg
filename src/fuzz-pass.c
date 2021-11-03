@@ -227,8 +227,11 @@ static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
 }
 
 static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigned int y) {
-    if (!fuzz.surface_id || fuzz.pointer_entered) {
+    if (!fuzz.surface_id){
         return -1;
+    }
+    if (fuzz.pointer_entered) {
+        return 0;
     }
     struct wldbg_message send_message;
     uint32_t buffer[6];
