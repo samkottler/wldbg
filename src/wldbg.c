@@ -614,7 +614,9 @@ wldbg_run(struct wldbg *wldbg)
 			break;
 		}
 
-		wldbg_fuzz_send_next(wldbg);
+		if (wldbg->flags.fuzz_mode) {
+            wldbg_fuzz_send_next(wldbg);
+        }
 	}
 
 	wldbg->flags.running = 0;
@@ -736,8 +738,6 @@ wldbg_init(struct wldbg *wldbg)
 	 * processing time when we don't need it */
 	if (wldbg_add_resolve_pass(wldbg) < 0)
 		goto err_signals;
-    if (wldbg_add_fuzz_pass(wldbg) < 0)
-        goto err_signals;
 
 	return 0;
 
@@ -891,6 +891,12 @@ parse_opts(struct wldbg *wldbg, struct wldbg_options *options,
 			return -1;
 		}
 	}
+    if (options->fuzz_mode) {
+        wldbg->flags.fuzz_mode = 1;
+        pass_num += 1;
+        if (wldbg_add_fuzz_pass(wldbg) < 0)
+            return -1;
+    }
 
 	if (pass_num == 0 && !options->server_mode) {
 		fprintf(stderr, "No passes loaded...\n");

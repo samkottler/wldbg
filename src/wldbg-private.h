@@ -114,6 +114,8 @@ struct wldbg {
 		unsigned int exit              : 1;
         /* running in server mode */
 		unsigned int server_mode       : 1;
+        /* running in fuzz testing mode */
+        unsigned int fuzz_mode         : 1;
 	} flags;
 
 	struct {

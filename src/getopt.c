@@ -81,6 +81,11 @@ set_opt(const char *arg, struct wldbg_options *opts)
 		opts->objinfo = 1;
 		match = 1;
 	}
+	else if (is_prefix_of(arg, "fuzz-mode")) {
+		dbg("Command line option: fuzz-mode\n");
+		opts->fuzz_mode = 1;
+		match = 1;
+	}
 
 	if (!match) {
 		fprintf(stderr, "Ignoring unknown option: %s\n", arg);
