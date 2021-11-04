@@ -265,9 +265,44 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigne
     return 0;
 }
 
+static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, unsigned int x, unsigned int y) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (!fuzz.pointer_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
+        return -1;
+    }
+    struct wldbg_message send_message;
+    uint32_t buffer[5];
+    uint32_t size = sizeof(buffer);
+    buffer[0] = fuzz.pointer_id;
+    buffer[1] = (size << 16) | 2;
+    buffer[2] = 0;
+    buffer[3] = x << 8;
+    buffer[4] = y << 8;
+
+    send_message.connection = wldbg->message.connection;
+    send_message.data = buffer;
+    send_message.size = size;
+    send_message.from = SERVER;
+
+    struct wl_connection *conn = wldbg->message.connection->client.connection;
+
+    if (wl_connection_write(conn, buffer, size) < 0) {
+        perror("Writing message to connection");
+        return -1;
+    }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+
+    wldbg_message_print(&send_message);
+    return 0;
+}
+
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
     static uint32_t pressed = 1;
-    if ((fuzz.has_sent && fuzz.buttons[BTN_LEFT]) ||!fuzz.has_sent) {
+    if (!fuzz.has_sent) {
         if (wldbg_fuzz_pointer_enter(wldbg, 45, 250) == 0) {
             fuzz.serial_number ++;
             if (wldbg_fuzz_send_button(wldbg, BTN_LEFT, pressed) == 0) {
