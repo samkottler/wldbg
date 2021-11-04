@@ -38,6 +38,8 @@
 #include "wldbg-pass.h"
 #include "getopt.h"
 
+#include "fuzz-pass.h"
+
 /* hardcoded passes */
 extern struct wldbg_pass wldbg_pass_list;
 
@@ -316,7 +318,12 @@ load_passes(struct wldbg *wldbg, struct wldbg_options *opts,
 				dbg("\targ[%d]: %s\n", i, argv[argc - rest + i]);
 			}
 #endif
-			pass = create_pass(argv[argc - rest]);
+            if (strncmp(argv[argc - rest], "fuzz", sizeof("fuzz")) == 0) {
+                wldbg->flags.fuzz_mode = 1;
+                pass = create_fuzz_pass();
+            } else {
+                pass = create_pass(argv[argc - rest]);
+            }
 			if (pass) {
 				if (pass_init(wldbg, pass, count,
 						argv + argc - rest) != 0) {

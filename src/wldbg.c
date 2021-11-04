@@ -599,8 +599,6 @@ wldbg_run(struct wldbg *wldbg)
 
 	wldbg->flags.running = 1;
 
-    int pressed = 0;
-
 	while((ret = wldbg_dispatch(wldbg)) > 0) {
 		if (wldbg->flags.error) {
 			dbg("Exiting for error flag");
@@ -891,12 +889,6 @@ parse_opts(struct wldbg *wldbg, struct wldbg_options *options,
 			return -1;
 		}
 	}
-    if (options->fuzz_mode) {
-        wldbg->flags.fuzz_mode = 1;
-        pass_num += 1;
-        if (wldbg_add_fuzz_pass(wldbg) < 0)
-            return -1;
-    }
 
 	if (pass_num == 0 && !options->server_mode) {
 		fprintf(stderr, "No passes loaded...\n");

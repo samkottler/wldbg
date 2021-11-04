@@ -31,7 +31,6 @@ struct wldbg_options {
 	unsigned int objinfo           : 1;
 	unsigned int server_mode       : 1;
 	unsigned int pass_whole_buffer : 1;
-    unsigned int fuzz_mode         : 1;
 
 	/* parsed path to the program and
 	 * its arguments */
