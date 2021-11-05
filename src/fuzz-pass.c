@@ -60,10 +60,12 @@ static struct {
     struct event* events;
     uint32_t had_first_damage;
     uint32_t displayed;
+    uint32_t block_events;
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
     memset(&fuzz, 0, sizeof(fuzz));
+
     fuzz.events = malloc(3*sizeof(struct event));
     if (!fuzz.events) {
         return -1;
@@ -79,10 +81,18 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     fuzz.events[2].mouse_enter.y = 250;
     fuzz.events[2].type = MOUSE_ENTER;
     fuzz.events[2].delay = 1000000;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strncmp(argv[i], "block", strlen("block")) == 0) {
+            fuzz.block_events = 1;
+        }
+    }
+
+    pass->user_data = wldbg;
     return 0;
 }
 
-static int fuzz_in(void *user_data, struct wldbg_message *message) {
+static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
     struct wldbg_resolved_message rm;
     if (!wldbg_resolve_message(message, &rm)) {
         return PASS_NEXT;
@@ -97,8 +107,20 @@ static int fuzz_in(void *user_data, struct wldbg_message *message) {
             fuzz.keyboard_entered = 1;
             fuzz.serial_number = buf[2];
         }
-        if (opcode == 2) {
+        else if (opcode == 2) {
             fuzz.keyboard_entered = 0;
+        }
+        else if(opcode == 3){
+            if (fuzz.block_events) {
+                wldbg->flags.skip = 1;
+                return PASS_STOP;
+            }
+        }
+    }
+    else if (strncmp(rm.wl_interface->name, "wl_pointer", strlen("wl_pointer")) == 0) {
+        if (fuzz.block_events) {
+            wldbg->flags.skip = 1;
+            return PASS_STOP;
         }
     }
 

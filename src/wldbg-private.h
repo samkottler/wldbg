@@ -116,6 +116,8 @@ struct wldbg {
 		unsigned int server_mode       : 1;
         /* running in fuzz testing mode */
         unsigned int fuzz_mode         : 1;
+        /* some pass asked to skip sending the current message */
+        unsigned int skip              : 1;
 	} flags;
 
 	struct {

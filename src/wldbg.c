@@ -313,17 +313,22 @@ process_one_by_one(struct wl_connection *write_conn,
 			return 0;
 		if (wldbg->flags.error)
 			return -1;
+        if (wldbg->flags.skip) {
+            wldbg->flags.skip = 0;
+        }
+        else {
 
-		if (wl_connection_write(write_conn, message->data,
-					message->size) < 0) {
-			perror("wl_connection_write");
-			return -1;
-		}
+            if (wl_connection_write(write_conn, message->data,
+                        message->size) < 0) {
+                perror("wl_connection_write");
+                return -1;
+            }
 
-		if (wl_connection_flush(write_conn) < 0) {
-			perror("wl_connection_flush");
-			return -1;
-		}
+            if (wl_connection_flush(write_conn) < 0) {
+                perror("wl_connection_flush");
+                return -1;
+            }
+        }
 
 		message->data = message->data + message->size;
 		rest -= message->size;
