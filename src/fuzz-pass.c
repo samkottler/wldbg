@@ -9,10 +9,43 @@
 #include "wayland/wayland-util.h"
 #include "wayland/wayland-private.h"
 
+enum event_type {
+    KEY_PRESS,
+    KEY_RELEASE,
+    MOUSE_ENTER,
+    MOUSE_PRESS,
+    MOUSE_RELEASE,
+    MOUSE_MOVE
+};
+
+struct event {
+    enum event_type type;
+    unsigned long delay;
+    union {
+        struct {
+            uint32_t key_code;
+        } key_press;
+        struct {
+            uint32_t key_code;
+        } key_release;
+        struct {
+            uint32_t x, y;
+        } mouse_enter;
+        struct {
+            uint32_t button_code;
+        } mouse_press;
+        struct {
+            uint32_t button_code;
+        } mouse_release;
+        struct {
+            uint32_t x, y;
+        } mouse_move;
+    };
+};
+
 static struct {
     uint32_t keyboard_entered;
     uint32_t pointer_entered;
-    uint32_t has_sent;
     uint32_t timestamp;
     uint32_t actual_time;
     uint32_t serial_number;
@@ -20,12 +53,32 @@ static struct {
     uint32_t pointer_id;
     uint32_t keyboad_id;
     unsigned long last_msg_nanos;
+    unsigned long delay;
     unsigned char buttons[KEY_MAX];
+    uint32_t num_events;
+    uint32_t event_idx;
+    struct event* events;
+    uint32_t had_first_damage;
+    uint32_t displayed;
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
-    printf("here %d\n", argc);
     memset(&fuzz, 0, sizeof(fuzz));
+    fuzz.events = malloc(3*sizeof(struct event));
+    if (!fuzz.events) {
+        return -1;
+    }
+    fuzz.num_events = 3;
+    fuzz.events[0].key_press.key_code = KEY_1;
+    fuzz.events[0].type = KEY_PRESS;
+    fuzz.events[0].delay = 1000000;
+    fuzz.events[1].key_press.key_code = KEY_1;
+    fuzz.events[1].type = KEY_RELEASE;
+    fuzz.events[1].delay = 1000000;
+    fuzz.events[2].mouse_enter.x = 45;
+    fuzz.events[2].mouse_enter.y = 250;
+    fuzz.events[2].type = MOUSE_ENTER;
+    fuzz.events[2].delay = 1000000;
     return 0;
 }
 
@@ -42,24 +95,9 @@ static int fuzz_in(void *user_data, struct wldbg_message *message) {
         if (opcode == 1) {
             //TODO: update fuzz.key_status
             fuzz.keyboard_entered = 1;
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            fuzz.last_msg_nanos = ts.tv_nsec;
             fuzz.serial_number = buf[2];
         }
         if (opcode == 2) {
-            fuzz.keyboard_entered = 0;
-        }
-    }
-    if (strncmp(rm.wl_interface->name, "wl_pointer", strlen("wl_pointer")) == 0) {
-        if (opcode == 0) {
-            fuzz.pointer_id = 1;
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            fuzz.last_msg_nanos = ts.tv_nsec;
-            fuzz.serial_number = buf[2];
-        }
-        if (opcode == 1) {
             fuzz.keyboard_entered = 0;
         }
     }
@@ -89,11 +127,24 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
             fuzz.keyboad_id = buf[2];
         }
     }
+    else if (strncmp(rm.wl_interface->name, "wl_surface", strlen("wl_surface")) == 0) {
+        if (opcode == 2) {
+            fuzz.had_first_damage = 1;
+        }
+        else if (opcode == 6 && fuzz.had_first_damage) {
+            fuzz.displayed = 1;
+            //wait 10 miliseconds to make sure everything is ready.
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            fuzz.last_msg_nanos = ts.tv_nsec;
+            fuzz.delay = 10000000;
+        }
+    }
     return PASS_NEXT;
 }
 
 static void fuzz_destroy(void *user_data) {
-
+    free(fuzz.events);
 }
 
 struct pass *create_fuzz_pass() {
@@ -113,9 +164,7 @@ struct pass *create_fuzz_pass() {
 }
 
 static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsigned char pressed) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (!fuzz.keyboard_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
+    if (!fuzz.keyboard_entered) {
         return -1;
     }
     struct wldbg_message send_message;
@@ -148,9 +197,7 @@ static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsig
 }
 
 static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsigned char pressed) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (!fuzz.keyboard_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
+    if (!fuzz.keyboard_entered) {
         return -1;
     }
     struct wldbg_message send_message;
@@ -223,7 +270,7 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigne
     uint32_t size = sizeof(buffer);
     buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 0;
-    buffer[2] = fuzz.serial_number;
+    buffer[2] = ++(fuzz.serial_number);
     buffer[3] = fuzz.surface_id;
     buffer[4] = x << 8;
     buffer[5] = y << 8;
@@ -251,9 +298,7 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigne
 }
 
 static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, unsigned int x, unsigned int y) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (!fuzz.pointer_entered || (ts.tv_nsec - fuzz.last_msg_nanos) < 1000000) {
+    if (!fuzz.pointer_entered) {
         return -1;
     }
     struct wldbg_message send_message;
@@ -286,19 +331,45 @@ static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, unsigned int x, unsign
 }
 
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
-    static uint32_t pressed = 1;
-    if (!fuzz.has_sent) {
-        if (wldbg_fuzz_pointer_enter(wldbg, 45, 250) == 0) {
-            fuzz.serial_number ++;
-            if (wldbg_fuzz_send_button(wldbg, BTN_LEFT, pressed) == 0) {
-                wldbg_fuzz_end_pointer_frame(wldbg);
-                fuzz.buttons[BTN_LEFT] = pressed;
-                pressed = 1 - pressed;
-                fuzz.has_sent = 1;
-                struct timespec ts;
-                clock_gettime(CLOCK_MONOTONIC, &ts);
-                fuzz.last_msg_nanos = ts.tv_nsec;
-            }
+    if (fuzz.event_idx < fuzz.num_events) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        if (fuzz.delay + fuzz.last_msg_nanos > ts.tv_nsec) {
+            return 0;
         }
+
+        struct event* event = &(fuzz.events[fuzz.event_idx]);
+        switch (event->type) {
+            case KEY_PRESS:
+                if (wldbg_fuzz_send_keyboard(wldbg, event->key_press.key_code, 1)) {
+                    return -1;
+                }
+                break;
+            case KEY_RELEASE:
+                if (wldbg_fuzz_send_keyboard(wldbg, event->key_release.key_code, 0)) {
+                    return -1;
+                }
+                break;
+            case MOUSE_PRESS:
+                break;
+            case MOUSE_RELEASE:
+                break;
+            case MOUSE_MOVE:
+                break;
+            case MOUSE_ENTER:
+                if (wldbg_fuzz_pointer_enter(wldbg, event->mouse_enter.x, event->mouse_enter.y)) {
+                    return -1;
+                }
+                if (wldbg_fuzz_end_pointer_frame(wldbg)) {
+                    return -1;
+                }
+                break;
+        }
+        fuzz.event_idx ++;
+        fuzz.delay = event->delay;
+
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        fuzz.last_msg_nanos = ts.tv_nsec;
     }
+    return 0;
 }
