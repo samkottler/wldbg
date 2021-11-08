@@ -29,7 +29,7 @@ struct event {
             uint32_t key_code;
         } key_release;
         struct {
-            uint32_t x, y;
+            float x, y;
         } mouse_enter;
         struct {
             uint32_t button_code;
@@ -38,7 +38,7 @@ struct event {
             uint32_t button_code;
         } mouse_release;
         struct {
-            uint32_t x, y;
+            float x, y;
         } mouse_move;
     };
 };
@@ -61,6 +61,8 @@ static struct {
     uint32_t had_first_damage;
     uint32_t displayed;
     uint32_t block_events;
+    uint32_t buffer_width;
+    uint32_t buffer_height;
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
@@ -77,8 +79,8 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     fuzz.events[1].key_press.key_code = KEY_1;
     fuzz.events[1].type = KEY_RELEASE;
     fuzz.events[1].delay = 1000000;
-    fuzz.events[2].mouse_enter.x = 45;
-    fuzz.events[2].mouse_enter.y = 250;
+    fuzz.events[2].mouse_enter.x = 0.5f;
+    fuzz.events[2].mouse_enter.y = 0.5f;
     fuzz.events[2].type = MOUSE_ENTER;
     fuzz.events[2].delay = 1000000;
 
@@ -161,6 +163,10 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
             fuzz.last_msg_nanos = ts.tv_nsec;
             fuzz.delay = 10000000;
         }
+    }
+    else if(strncmp(rm.wl_interface->name, "wl_shm_pool", strlen("wl_shm_pool")) == 0) {
+        fuzz.buffer_width = buf[4];
+        fuzz.buffer_height = buf[5];
     }
     return PASS_NEXT;
 }
@@ -280,13 +286,15 @@ static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
     return 0;
 }
 
-static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigned int y) {
+static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, float x, float y) {
     if (!fuzz.surface_id){
         return -1;
     }
     if (fuzz.pointer_entered) {
         return 0;
     }
+    uint32_t real_x = fuzz.buffer_width * x;
+    uint32_t real_y = fuzz.buffer_height * y;
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
@@ -294,8 +302,8 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigne
     buffer[1] = (size << 16) | 0;
     buffer[2] = ++(fuzz.serial_number);
     buffer[3] = fuzz.surface_id;
-    buffer[4] = x << 8;
-    buffer[5] = y << 8;
+    buffer[4] = real_x << 8;
+    buffer[5] = real_y << 8;
 
     send_message.connection = wldbg->message.connection;
     send_message.data = buffer;
@@ -319,18 +327,20 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, unsigned int x, unsigne
     return 0;
 }
 
-static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, unsigned int x, unsigned int y) {
+static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
     if (!fuzz.pointer_entered) {
         return -1;
     }
+    uint32_t real_x = fuzz.buffer_width * x;
+    uint32_t real_y = fuzz.buffer_height * y;
     struct wldbg_message send_message;
     uint32_t buffer[5];
     uint32_t size = sizeof(buffer);
     buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 2;
     buffer[2] = 0;
-    buffer[3] = x << 8;
-    buffer[4] = y << 8;
+    buffer[3] = real_x << 8;
+    buffer[4] = real_y << 8;
 
     send_message.connection = wldbg->message.connection;
     send_message.data = buffer;
