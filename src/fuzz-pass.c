@@ -9,12 +9,13 @@
 #include "wayland/wayland-util.h"
 #include "wayland/wayland-private.h"
 
+#define MILLIS_PER_NANO 1000000
+
 enum event_type {
-    KEY_PRESS,
-    KEY_RELEASE,
+    KEY,
     MOUSE_ENTER,
-    MOUSE_PRESS,
-    MOUSE_RELEASE,
+    MOUSE_LEAVE,
+    MOUSE_BUTTON,
     MOUSE_MOVE
 };
 
@@ -23,20 +24,14 @@ struct event {
     unsigned long delay;
     union {
         struct {
-            uint32_t key_code;
-        } key_press;
-        struct {
-            uint32_t key_code;
-        } key_release;
+            uint32_t key_code, pressed;
+        } key;
         struct {
             float x, y;
         } mouse_enter;
         struct {
-            uint32_t button_code;
-        } mouse_press;
-        struct {
-            uint32_t button_code;
-        } mouse_release;
+            uint32_t button_code, pressed;
+        } mouse_button;
         struct {
             float x, y;
         } mouse_move;
@@ -66,30 +61,61 @@ static struct {
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
-    memset(&fuzz, 0, sizeof(fuzz));
-
-    fuzz.events = malloc(3*sizeof(struct event));
-    if (!fuzz.events) {
+    if (argc < 2) {
+        printf("fuzzer needs an events file\n");
         return -1;
     }
-    fuzz.num_events = 3;
-    fuzz.events[0].key_press.key_code = KEY_1;
-    fuzz.events[0].type = KEY_PRESS;
-    fuzz.events[0].delay = 1000000;
-    fuzz.events[1].key_press.key_code = KEY_1;
-    fuzz.events[1].type = KEY_RELEASE;
-    fuzz.events[1].delay = 1000000;
-    fuzz.events[2].mouse_enter.x = 0.5f;
-    fuzz.events[2].mouse_enter.y = 0.5f;
-    fuzz.events[2].type = MOUSE_ENTER;
-    fuzz.events[2].delay = 1000000;
 
-    for (int i = 1; i < argc; ++i) {
+    memset(&fuzz, 0, sizeof(fuzz));
+
+    for (int i = 1; i < argc-1; ++i) {
         if (strncmp(argv[i], "block", strlen("block")) == 0) {
             fuzz.block_events = 1;
         }
     }
 
+    FILE* fd = fopen(argv[argc-1], "r");
+    if (!fd){
+        perror("fopen:");
+        return -1;
+    }
+
+    fuzz.events = malloc(512 * sizeof(struct event));
+    if (!fuzz.events) {
+        fclose(fd);
+        return -1;
+    }
+
+    //TODO: better error checking
+    char* line = NULL;
+    size_t len = 0;
+    fuzz.num_events = 0;
+    int serial, ts;
+    while (getline(&line, &len, fd) > 0) {
+        struct event *event = &(fuzz.events[fuzz.num_events]);
+        if (strncmp(line, "KEY", 3) == 0){
+            event->type = KEY;
+            sscanf(line + 4, "%d,%d,%d,%d\n", &serial, &ts, &(event->key.key_code), &(event->key.pressed));
+        }
+        if (strncmp(line, "MOTION", 6) == 0) {
+            event->type = MOUSE_MOVE;
+            sscanf(line + 7, "%d,%f,%f\n", &serial, &(event->mouse_move.x), &(event->mouse_move.y));
+        }
+        if (strncmp(line, "BUTTON", 6) == 0) {
+            sscanf(line + 7, "%d,%d,%d,%d\n", &serial, &ts, &(event->mouse_button.button_code), &(event->mouse_button.pressed));
+            event->type = MOUSE_BUTTON;
+        }
+        if (strncmp(line, "ENTER", 5) == 0) {
+            sscanf(line + 6, "%d,%d,%f,%f\n", &serial, &ts, &(event->mouse_enter.x), &(event->mouse_enter.y));
+            event->type = MOUSE_ENTER;
+        }
+
+        event->delay = 15 * MILLIS_PER_NANO;
+        fuzz.num_events ++;
+    }
+    free(line);
+
+    fclose(fd);
     pass->user_data = wldbg;
     return 0;
 }
@@ -328,9 +354,6 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, float x, float y) {
 }
 
 static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
-    if (!fuzz.pointer_entered) {
-        return -1;
-    }
     uint32_t real_x = fuzz.buffer_width * x;
     uint32_t real_y = fuzz.buffer_height * y;
     struct wldbg_message send_message;
@@ -372,21 +395,26 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
 
         struct event* event = &(fuzz.events[fuzz.event_idx]);
         switch (event->type) {
-            case KEY_PRESS:
-                if (wldbg_fuzz_send_keyboard(wldbg, event->key_press.key_code, 1)) {
+            case KEY:
+                if (wldbg_fuzz_send_keyboard(wldbg, event->key.key_code, event->key.pressed)) {
                     return -1;
                 }
                 break;
-            case KEY_RELEASE:
-                if (wldbg_fuzz_send_keyboard(wldbg, event->key_release.key_code, 0)) {
+            case MOUSE_BUTTON:
+                if (wldbg_fuzz_send_button(wldbg, event->mouse_button.button_code, event->mouse_button.pressed)) {
                     return -1;
                 }
-                break;
-            case MOUSE_PRESS:
-                break;
-            case MOUSE_RELEASE:
+                if (wldbg_fuzz_end_pointer_frame(wldbg)) {
+                    return -1;
+                }
                 break;
             case MOUSE_MOVE:
+                if (wldbg_fuzz_pointer_motion(wldbg, event->mouse_move.x, event->mouse_move.y)){
+                    return 1;
+                }
+                if (wldbg_fuzz_end_pointer_frame(wldbg)) {
+                    return -1;
+                }
                 break;
             case MOUSE_ENTER:
                 if (wldbg_fuzz_pointer_enter(wldbg, event->mouse_enter.x, event->mouse_enter.y)) {
@@ -397,6 +425,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
                 }
                 break;
         }
+
         fuzz.event_idx ++;
         fuzz.delay = event->delay;
 
