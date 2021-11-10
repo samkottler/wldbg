@@ -10,6 +10,7 @@
 #include "wayland/wayland-private.h"
 
 #define MILLIS_PER_NANO 1000000
+#define NANOS_PER_SEC 1000000000
 
 enum event_type {
     KEY,
@@ -424,7 +425,8 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
     if (fuzz.event_idx < fuzz.num_events) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
-        if (fuzz.delay + fuzz.last_msg_nanos > ts.tv_nsec) {
+
+        if ((fuzz.delay + fuzz.last_msg_nanos) % NANOS_PER_SEC > ts.tv_nsec || (fuzz.delay+fuzz.last_msg_nanos) / NANOS_PER_SEC > ts.tv_sec) {
             return 0;
         }
 
