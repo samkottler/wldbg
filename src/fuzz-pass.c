@@ -357,6 +357,37 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, float x, float y) {
     return 0;
 }
 
+static int wldbg_fuzz_pointer_leave(struct wldbg* wldbg) {
+    struct wldbg_message send_message;
+    uint32_t buffer[4];
+    uint32_t size = sizeof(buffer);
+    buffer[0] = fuzz.pointer_id;
+    buffer[1] = (size << 16) | 1;
+    buffer[2] = ++(fuzz.serial_number);
+    buffer[3] = fuzz.surface_id;
+
+    send_message.connection = wldbg->message.connection;
+    send_message.data = buffer;
+    send_message.size = size;
+    send_message.from = SERVER;
+
+    struct wl_connection *conn = wldbg->message.connection->client.connection;
+
+    if (wl_connection_write(conn, buffer, size) < 0) {
+        perror("Writing message to connection");
+        return -1;
+    }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+
+    fuzz.pointer_entered = 1;
+
+    wldbg_message_print(&send_message);
+    return 0;
+}
+
 static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
     uint32_t real_x = fuzz.buffer_width * x;
     uint32_t real_y = fuzz.buffer_height * y;
@@ -422,6 +453,14 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
                 break;
             case MOUSE_ENTER:
                 if (wldbg_fuzz_pointer_enter(wldbg, event->mouse_enter.x, event->mouse_enter.y)) {
+                    return -1;
+                }
+                if (wldbg_fuzz_end_pointer_frame(wldbg)) {
+                    return -1;
+                }
+                break;
+            case MOUSE_LEAVE:
+                if (wldbg_fuzz_pointer_leave(wldbg)) {
                     return -1;
                 }
                 if (wldbg_fuzz_end_pointer_frame(wldbg)) {
