@@ -90,27 +90,31 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     char* line = NULL;
     size_t len = 0;
     fuzz.num_events = 0;
-    int serial, ts;
+    int serial;
     while (getline(&line, &len, fd) > 0) {
         struct event *event = &(fuzz.events[fuzz.num_events]);
         if (strncmp(line, "KEY", 3) == 0){
             event->type = KEY;
-            sscanf(line + 4, "%d,%d,%d,%d\n", &serial, &ts, &(event->key.key_code), &(event->key.pressed));
+            sscanf(line + 4, "%d,%ld,%d,%d\n", &serial, &(event->delay), &(event->key.key_code), &(event->key.pressed));
         }
         if (strncmp(line, "MOTION", 6) == 0) {
             event->type = MOUSE_MOVE;
-            sscanf(line + 7, "%d,%f,%f\n", &serial, &(event->mouse_move.x), &(event->mouse_move.y));
+            sscanf(line + 7, "%ld,%f,%f\n", &(event->delay), &(event->mouse_move.x), &(event->mouse_move.y));
         }
         if (strncmp(line, "BUTTON", 6) == 0) {
-            sscanf(line + 7, "%d,%d,%d,%d\n", &serial, &ts, &(event->mouse_button.button_code), &(event->mouse_button.pressed));
+            sscanf(line + 7, "%d,%ld,%d,%d\n", &serial, &(event->delay), &(event->mouse_button.button_code), &(event->mouse_button.pressed));
             event->type = MOUSE_BUTTON;
         }
         if (strncmp(line, "ENTER", 5) == 0) {
-            sscanf(line + 6, "%d,%d,%f,%f\n", &serial, &ts, &(event->mouse_enter.x), &(event->mouse_enter.y));
+            sscanf(line + 6, "%ld,%f,%f\n", &(event->delay), &(event->mouse_enter.x), &(event->mouse_enter.y));
             event->type = MOUSE_ENTER;
         }
+        if (strncmp(line, "LEAVE", 5) == 0) {
+            sscanf(line + 6, "%ld\n", &(event->delay));
+            event->type = MOUSE_LEAVE;
+        }
 
-        event->delay = 15 * MILLIS_PER_NANO;
+        event->delay *= MILLIS_PER_NANO;
         fuzz.num_events ++;
     }
     free(line);
