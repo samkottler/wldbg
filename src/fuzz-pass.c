@@ -10,8 +10,9 @@
 #include "wayland/wayland-private.h"
 
 #define MILLIS_PER_SEC 1000
-#define MILLIS_PER_NANO 1000000
-#define NANOS_PER_SEC 1000000000
+#define NANOS_PER_MILLI 1000000
+
+#define INTERFACE_MATCHES(strname) (strcmp(rm.wl_interface->name, (strname)) == 0)
 
 enum event_type {
     KEY,
@@ -71,26 +72,24 @@ static struct serial_message client_serials[] = {
     {"wl_pointer", 0, 2}
 };
 
-// I don't think there will every be more than one sync waiting at once, but just in case handle up to 64 in a ring queue
+// I don't think there will every be more than one sync waiting at once, but just in case handle up
+// to 64 in a ring queue
 #define NUM_SYNC_IDS 64
 
 static struct {
-    uint32_t keyboard_entered;
-    uint32_t pointer_entered;
     uint32_t timestamp;
-    uint32_t actual_time;
     uint32_t serial_number;
     uint32_t surface_id; //TODO: Maybe could be multiple surfaces?
     uint32_t pointer_id;
-    uint32_t keyboad_id;
-    struct timespec last_msg_nanos;
+    uint32_t keyboard_id;
+    struct timespec last_msg_ts;
     struct timespec delay;
-    unsigned char buttons[KEY_MAX];
     uint32_t num_events;
     uint32_t event_idx;
     struct event* events;
     uint32_t had_first_damage;
     uint32_t displayed;
+    uint32_t ready_for_input;
     uint32_t block_events;
     uint32_t buffer_width;
     uint32_t buffer_height;
@@ -155,7 +154,7 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
         }
 
         event->delay.tv_sec = millis/MILLIS_PER_SEC;
-        event->delay.tv_nsec = (millis % MILLIS_PER_SEC) * MILLIS_PER_NANO;
+        event->delay.tv_nsec = (millis % MILLIS_PER_SEC) * NANOS_PER_MILLI;
         fuzz.num_events ++;
     }
     free(line);
@@ -165,7 +164,8 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     return 0;
 }
 
-static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
+static int fuzz_in(void *user_data, struct wldbg_message *message) {
+    struct wldbg* wldbg = user_data;
     struct wldbg_resolved_message rm;
     if (!wldbg_resolve_message(message, &rm)) {
         return PASS_NEXT;
@@ -174,12 +174,8 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
     uint32_t *buf = message->data;
     uint32_t opcode = buf[1] & 0xffff;
 
-    if (strncmp(rm.wl_interface->name, "wl_keyboard", strlen("wl_keyboard")) == 0) {
-        if (opcode == 1) {
-            //TODO: update fuzz.key_status
-            fuzz.keyboard_entered = 1;
-        }
-        else if (opcode == 2) {
+    if (INTERFACE_MATCHES("wl_keyboard")) {
+        if (opcode == 2) {
             wldbg->flags.skip = 1;
             return PASS_STOP;
         }
@@ -190,13 +186,15 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
             }
         }
     }
-    else if (strncmp(rm.wl_interface->name, "wl_pointer", strlen("wl_pointer")) == 0) {
+    else if (INTERFACE_MATCHES("wl_pointer")) {
         if (fuzz.block_events) {
             wldbg->flags.skip = 1;
             return PASS_STOP;
         }
     }
     else if (buf[0] == fuzz.sync_ids[fuzz.sync_id_start]) {
+        // callback from display sync
+        // response is the server's current serial number
         if (fuzz.serial_number) {
             buf[2] = ++(fuzz.serial_number);
         }
@@ -208,7 +206,7 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
     }
 
     for (int i = 0; i < sizeof(server_serials)/sizeof(struct serial_message); ++i) {
-        if (strcmp(rm.wl_interface->name, server_serials[i].name) == 0) {
+        if (INTERFACE_MATCHES(server_serials[i].name)) {
             if (opcode == server_serials[i].opcode) {
                 if (fuzz.serial_number) {
                     buf[server_serials[i].serial_index] = ++(fuzz.serial_number);
@@ -232,43 +230,47 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
     uint32_t *buf = message->data;
     uint32_t opcode = buf[1] & 0xffff;
 
-    if (strncmp(rm.wl_interface->name, "wl_compositor", strlen("wl_compositor")) == 0) {
+    if (INTERFACE_MATCHES("wl_compositor")) {
         if (opcode == 0) {
             fuzz.surface_id = buf[2];
         }
     }
-    else if (strncmp(rm.wl_interface->name, "wl_seat", strlen("wl_seat")) == 0) {
+    else if (INTERFACE_MATCHES("wl_seat")) {
         if (opcode == 0) {
             fuzz.pointer_id = buf[2];
         }
         else if (opcode == 1) {
-            fuzz.keyboad_id = buf[2];
+            fuzz.keyboard_id = buf[2];
         }
     }
-    else if (strncmp(rm.wl_interface->name, "wl_surface", strlen("wl_surface")) == 0) {
+    else if (INTERFACE_MATCHES("wl_surface")) {
         if (opcode == 2) {
             fuzz.had_first_damage = 1;
         }
-        else if (opcode == 6 && fuzz.had_first_damage && fuzz.displayed == 0) {
+        else if (opcode == 6 && fuzz.had_first_damage) {
             fuzz.displayed = 1;
-            //wait 10 miliseconds to make sure everything is ready.
-            clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_nanos));
-            fuzz.delay.tv_nsec = 10 * MILLIS_PER_NANO;
         }
     }
-    else if(strncmp(rm.wl_interface->name, "wl_shm_pool", strlen("wl_shm_pool")) == 0) {
+    else if (INTERFACE_MATCHES("wl_shm_pool")) {
         fuzz.buffer_width = buf[4];
         fuzz.buffer_height = buf[5];
     }
-    else if(strncmp(rm.wl_interface->name, "wl_display", strlen("wl_display")) == 0) {
+    else if (INTERFACE_MATCHES("wl_display")) {
         if (opcode == 0) {
             fuzz.sync_ids[fuzz.sync_id_end++] = buf[2];
             fuzz.sync_id_end %= NUM_SYNC_IDS;
         }
     }
 
+    if (!(fuzz.ready_for_input) && fuzz.pointer_id && fuzz.keyboard_id && fuzz.displayed) {
+        fuzz.ready_for_input = 1;
+        //wait 10 miliseconds to make sure everything is ready.
+        clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_ts ));
+        fuzz.delay.tv_nsec = 10 * NANOS_PER_MILLI;
+    }
+
     for (int i = 0; i < sizeof(client_serials)/sizeof(struct serial_message); ++i) {
-        if (strcmp(rm.wl_interface->name, client_serials[i].name) == 0) {
+        if (INTERFACE_MATCHES(client_serials[i].name)) {
             if (opcode == client_serials[i].opcode) {
                 if (fuzz.serial_number) {
                     buf[client_serials[i].serial_index] = ++(fuzz.serial_number);
@@ -303,14 +305,26 @@ struct pass *create_fuzz_pass() {
     return pass;
 }
 
-static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsigned char pressed) {
-    if (!fuzz.keyboard_entered) {
+static int wldbg_fuzz_send(struct wldbg_message *msg) {
+    struct wl_connection *conn = msg->connection->client.connection;
+
+    if (wl_connection_write(conn, msg->data, msg->size) < 0) {
+        perror("Writing message to connection");
         return -1;
     }
+    if (wl_connection_flush(conn) < 0) {
+        perror("wl_connection_flush");
+        return -1;
+    }
+    wldbg_message_print(msg);
+    return 0;
+}
+
+static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsigned char pressed) {
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
-    buffer[0] = fuzz.keyboad_id;
+    buffer[0] = fuzz.keyboard_id;
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
     buffer[3] = 0;
@@ -322,24 +336,10 @@ static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsig
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsigned char pressed) {
-    if (!fuzz.keyboard_entered) {
-        return -1;
-    }
     struct wldbg_message send_message;
     uint32_t buffer[6];
     uint32_t size = sizeof(buffer);
@@ -355,24 +355,10 @@ static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsi
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
-    if (!fuzz.keyboard_entered) {
-        return -1;
-    }
     struct wldbg_message send_message;
     uint32_t buffer[2];
     uint32_t size = sizeof(buffer);
@@ -384,27 +370,10 @@ static int wldbg_fuzz_end_pointer_frame(struct wldbg* wldbg) {
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, float x, float y) {
-    if (!fuzz.surface_id){
-        return -1;
-    }
-    if (fuzz.pointer_entered) {
-        return 0;
-    }
     uint32_t real_x = fuzz.buffer_width * x;
     uint32_t real_y = fuzz.buffer_height * y;
     struct wldbg_message send_message;
@@ -422,21 +391,7 @@ static int wldbg_fuzz_pointer_enter(struct wldbg* wldbg, float x, float y) {
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-
-    fuzz.pointer_entered = 1;
-
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 static int wldbg_fuzz_pointer_leave(struct wldbg* wldbg) {
@@ -453,21 +408,7 @@ static int wldbg_fuzz_pointer_leave(struct wldbg* wldbg) {
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-
-    fuzz.pointer_entered = 1;
-
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
@@ -487,39 +428,32 @@ static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
     send_message.size = size;
     send_message.from = SERVER;
 
-    struct wl_connection *conn = wldbg->message.connection->client.connection;
-
-    if (wl_connection_write(conn, buffer, size) < 0) {
-        perror("Writing message to connection");
-        return -1;
-    }
-    if (wl_connection_flush(conn) < 0) {
-        perror("wl_connection_flush");
-        return -1;
-    }
-
-    wldbg_message_print(&send_message);
-    return 0;
+    return wldbg_fuzz_send(&send_message);
 }
 
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
-    if (fuzz.event_idx < fuzz.num_events) {
+    if (fuzz.ready_for_input && fuzz.event_idx < fuzz.num_events) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
 
-        if ((fuzz.delay.tv_sec + fuzz.last_msg_nanos.tv_sec) > ts.tv_sec || (fuzz.delay.tv_nsec+fuzz.last_msg_nanos.tv_nsec) > ts.tv_nsec) {
+        //TODO: this comparison is still wrong
+        if ((fuzz.delay.tv_sec + fuzz.last_msg_ts.tv_sec) > ts.tv_sec || (fuzz.delay.tv_nsec+fuzz.last_msg_ts.tv_nsec) > ts.tv_nsec) {
             return 0;
         }
 
         struct event* event = &(fuzz.events[fuzz.event_idx]);
         switch (event->type) {
             case KEY:
-                if (wldbg_fuzz_send_keyboard(wldbg, event->key.key_code, event->key.pressed)) {
+                uint32_t pressed = event->key.pressed;
+                uint32_t key_code = event->key.key_code;
+                if (wldbg_fuzz_send_keyboard(wldbg, key_code, pressed)) {
                     return -1;
                 }
                 break;
             case MOUSE_BUTTON:
-                if (wldbg_fuzz_send_button(wldbg, event->mouse_button.button_code, event->mouse_button.pressed)) {
+                pressed = event->mouse_button.pressed;
+                uint32_t button_code = event->mouse_button.button_code;
+                if (wldbg_fuzz_send_button(wldbg, button_code, pressed)) {
                     return -1;
                 }
                 if (wldbg_fuzz_end_pointer_frame(wldbg)) {
@@ -555,7 +489,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
         fuzz.event_idx ++;
         fuzz.delay = event->delay;
 
-        clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_nanos));
+        clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_ts ));
     }
     return 0;
 }
