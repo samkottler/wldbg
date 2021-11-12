@@ -9,6 +9,7 @@
 #include "wayland/wayland-util.h"
 #include "wayland/wayland-private.h"
 
+#define MILLIS_PER_SEC 1000
 #define MILLIS_PER_NANO 1000000
 #define NANOS_PER_SEC 1000000000
 
@@ -22,7 +23,7 @@ enum event_type {
 
 struct event {
     enum event_type type;
-    unsigned long delay;
+    struct timespec delay;
     union {
         struct {
             uint32_t key_code, pressed;
@@ -82,8 +83,8 @@ static struct {
     uint32_t surface_id; //TODO: Maybe could be multiple surfaces?
     uint32_t pointer_id;
     uint32_t keyboad_id;
-    unsigned long last_msg_nanos;
-    unsigned long delay;
+    struct timespec last_msg_nanos;
+    struct timespec delay;
     unsigned char buttons[KEY_MAX];
     uint32_t num_events;
     uint32_t event_idx;
@@ -129,30 +130,32 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     size_t len = 0;
     fuzz.num_events = 0;
     int serial;
+    unsigned long millis;
     while (getline(&line, &len, fd) > 0) {
         struct event *event = &(fuzz.events[fuzz.num_events]);
         if (strncmp(line, "KEY", 3) == 0){
             event->type = KEY;
-            sscanf(line + 4, "%d,%ld,%d,%d\n", &serial, &(event->delay), &(event->key.key_code), &(event->key.pressed));
+            sscanf(line + 4, "%d,%ld,%d,%d\n", &serial, &millis, &(event->key.key_code), &(event->key.pressed));
         }
         if (strncmp(line, "MOTION", 6) == 0) {
             event->type = MOUSE_MOVE;
-            sscanf(line + 7, "%ld,%f,%f\n", &(event->delay), &(event->mouse_move.x), &(event->mouse_move.y));
+            sscanf(line + 7, "%ld,%f,%f\n", &millis, &(event->mouse_move.x), &(event->mouse_move.y));
         }
         if (strncmp(line, "BUTTON", 6) == 0) {
-            sscanf(line + 7, "%d,%ld,%d,%d\n", &serial, &(event->delay), &(event->mouse_button.button_code), &(event->mouse_button.pressed));
+            sscanf(line + 7, "%d,%ld,%d,%d\n", &serial, &millis, &(event->mouse_button.button_code), &(event->mouse_button.pressed));
             event->type = MOUSE_BUTTON;
         }
         if (strncmp(line, "ENTER", 5) == 0) {
-            sscanf(line + 6, "%ld,%f,%f\n", &(event->delay), &(event->mouse_enter.x), &(event->mouse_enter.y));
+            sscanf(line + 6, "%ld,%f,%f\n", &millis, &(event->mouse_enter.x), &(event->mouse_enter.y));
             event->type = MOUSE_ENTER;
         }
         if (strncmp(line, "LEAVE", 5) == 0) {
-            sscanf(line + 6, "%ld\n", &(event->delay));
+            sscanf(line + 6, "%ld\n", &millis);
             event->type = MOUSE_LEAVE;
         }
 
-        event->delay *= MILLIS_PER_NANO;
+        event->delay.tv_sec = millis/MILLIS_PER_SEC;
+        event->delay.tv_nsec = (millis % MILLIS_PER_SEC) * MILLIS_PER_NANO;
         fuzz.num_events ++;
     }
     free(line);
@@ -175,10 +178,10 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
         if (opcode == 1) {
             //TODO: update fuzz.key_status
             fuzz.keyboard_entered = 1;
-            fuzz.serial_number = buf[2];
         }
         else if (opcode == 2) {
-            fuzz.keyboard_entered = 0;
+            wldbg->flags.skip = 1;
+            return PASS_STOP;
         }
         else if(opcode == 3){
             if (fuzz.block_events) {
@@ -216,8 +219,6 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
             }
         }
     }
-        printf("%d\n", fuzz.serial_number);
-
 
     return PASS_NEXT;
 }
@@ -248,13 +249,11 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
         if (opcode == 2) {
             fuzz.had_first_damage = 1;
         }
-        else if (opcode == 6 && fuzz.had_first_damage) {
+        else if (opcode == 6 && fuzz.had_first_damage && fuzz.displayed == 0) {
             fuzz.displayed = 1;
             //wait 10 miliseconds to make sure everything is ready.
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            fuzz.last_msg_nanos = ts.tv_nsec;
-            fuzz.delay = 10000000;
+            clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_nanos));
+            fuzz.delay.tv_nsec = 10 * MILLIS_PER_NANO;
         }
     }
     else if(strncmp(rm.wl_interface->name, "wl_shm_pool", strlen("wl_shm_pool")) == 0) {
@@ -280,7 +279,6 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
             }
         }
     }
-    printf("%d\n", fuzz.serial_number);
 
     return PASS_NEXT;
 }
@@ -509,7 +507,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
 
-        if ((fuzz.delay + fuzz.last_msg_nanos) % NANOS_PER_SEC > ts.tv_nsec || (fuzz.delay+fuzz.last_msg_nanos) / NANOS_PER_SEC > ts.tv_sec) {
+        if ((fuzz.delay.tv_sec + fuzz.last_msg_nanos.tv_sec) > ts.tv_sec || (fuzz.delay.tv_nsec+fuzz.last_msg_nanos.tv_nsec) > ts.tv_nsec) {
             return 0;
         }
 
@@ -557,8 +555,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
         fuzz.event_idx ++;
         fuzz.delay = event->delay;
 
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        fuzz.last_msg_nanos = ts.tv_nsec;
+        clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_nanos));
     }
     return 0;
 }
