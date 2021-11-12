@@ -39,6 +39,40 @@ struct event {
     };
 };
 
+struct serial_message {
+    char* name;
+    uint32_t opcode;
+    uint32_t serial_index;
+};
+
+static struct serial_message server_serials[] = {
+    {"wl_data_device", 1, 2},
+    {"wl_shell_surface", 0, 2},
+    {"wl_pointer", 0, 2},
+    {"wl_pointer", 1, 2},
+    {"wl_pointer", 3, 2},
+    {"wl_keyboard", 1, 2},
+    {"wl_keyboard", 2, 2},
+    {"wl_keyboard", 3, 2},
+    {"wl_keyboard", 4, 2},
+    {"wl_touch", 0, 2},
+    {"wl_touch", 1, 2}
+};
+
+static struct serial_message client_serials[] = {
+    {"wl_data_offer", 0, 2},
+    {"wl_data_device", 0, 5},
+    {"wl_data_device", 1, 3},
+    {"wl_shell_surface", 0, 2},
+    {"wl_shell_surface", 1, 3},
+    {"wl_shell_surface", 2, 3},
+    {"wl_shell_surface", 6, 3},
+    {"wl_pointer", 0, 2}
+};
+
+// I don't think there will every be more than one sync waiting at once, but just in case handle up to 64 in a ring queue
+#define NUM_SYNC_IDS 64
+
 static struct {
     uint32_t keyboard_entered;
     uint32_t pointer_entered;
@@ -59,6 +93,9 @@ static struct {
     uint32_t block_events;
     uint32_t buffer_width;
     uint32_t buffer_height;
+    uint32_t sync_ids[NUM_SYNC_IDS];
+    uint32_t sync_id_start;
+    uint32_t sync_id_end;
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
@@ -156,6 +193,31 @@ static int fuzz_in(struct wldbg* wldbg, struct wldbg_message *message) {
             return PASS_STOP;
         }
     }
+    else if (buf[0] == fuzz.sync_ids[fuzz.sync_id_start]) {
+        if (fuzz.serial_number) {
+            buf[2] = ++(fuzz.serial_number);
+        }
+        else {
+            fuzz.serial_number = buf[2];
+        }
+        ++(fuzz.sync_id_start);
+        fuzz.sync_id_start %= NUM_SYNC_IDS;
+    }
+
+    for (int i = 0; i < sizeof(server_serials)/sizeof(struct serial_message); ++i) {
+        if (strcmp(rm.wl_interface->name, server_serials[i].name) == 0) {
+            if (opcode == server_serials[i].opcode) {
+                if (fuzz.serial_number) {
+                    buf[server_serials[i].serial_index] = ++(fuzz.serial_number);
+                }
+                else {
+                    fuzz.serial_number = buf[server_serials[i].serial_index];
+                }
+            }
+        }
+    }
+        printf("%d\n", fuzz.serial_number);
+
 
     return PASS_NEXT;
 }
@@ -199,6 +261,27 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
         fuzz.buffer_width = buf[4];
         fuzz.buffer_height = buf[5];
     }
+    else if(strncmp(rm.wl_interface->name, "wl_display", strlen("wl_display")) == 0) {
+        if (opcode == 0) {
+            fuzz.sync_ids[fuzz.sync_id_end++] = buf[2];
+            fuzz.sync_id_end %= NUM_SYNC_IDS;
+        }
+    }
+
+    for (int i = 0; i < sizeof(client_serials)/sizeof(struct serial_message); ++i) {
+        if (strcmp(rm.wl_interface->name, client_serials[i].name) == 0) {
+            if (opcode == client_serials[i].opcode) {
+                if (fuzz.serial_number) {
+                    buf[client_serials[i].serial_index] = ++(fuzz.serial_number);
+                }
+                else {
+                    fuzz.serial_number = buf[client_serials[i].serial_index];
+                }
+            }
+        }
+    }
+    printf("%d\n", fuzz.serial_number);
+
     return PASS_NEXT;
 }
 
