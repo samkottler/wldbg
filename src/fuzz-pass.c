@@ -9,8 +9,9 @@
 #include "wayland/wayland-util.h"
 #include "wayland/wayland-private.h"
 
-#define MILLIS_PER_SEC 1000
+#define MILLIS_PER_SEC  1000
 #define NANOS_PER_MILLI 1000000
+#define NANOS_PER_SEC   1000000000
 
 #define INTERFACE_MATCHES(strname) (strcmp(rm.wl_interface->name, (strname)) == 0)
 
@@ -77,7 +78,7 @@ static struct serial_message client_serials[] = {
 #define NUM_SYNC_IDS 64
 
 static struct {
-    uint32_t timestamp;
+    struct timespec timestamp_start;
     uint32_t serial_number;
     uint32_t surface_id; //TODO: Maybe could be multiple surfaces?
     uint32_t pointer_id;
@@ -96,6 +97,7 @@ static struct {
     uint32_t sync_ids[NUM_SYNC_IDS];
     uint32_t sync_id_start;
     uint32_t sync_id_end;
+    uint32_t frame_id;
 } fuzz;
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
@@ -204,6 +206,19 @@ static int fuzz_in(void *user_data, struct wldbg_message *message) {
         ++(fuzz.sync_id_start);
         fuzz.sync_id_start %= NUM_SYNC_IDS;
     }
+    else if (buf[0] == fuzz.frame_id && fuzz.frame_id != 0) {
+        fuzz.frame_id = 0;
+        clock_gettime(CLOCK_MONOTONIC, &(fuzz.timestamp_start));
+        long millis = buf[2];
+        long nanos = (millis % MILLIS_PER_SEC) * NANOS_PER_MILLI;
+        long secs = millis / MILLIS_PER_SEC;
+        if (nanos > fuzz.timestamp_start.tv_nsec) {
+            fuzz.timestamp_start.tv_nsec += NANOS_PER_SEC;
+            fuzz.timestamp_start.tv_sec -= 1;
+        }
+        fuzz.timestamp_start.tv_nsec -= nanos;
+        fuzz.timestamp_start.tv_sec -= secs;
+    }
 
     for (int i = 0; i < sizeof(server_serials)/sizeof(struct serial_message); ++i) {
         if (INTERFACE_MATCHES(server_serials[i].name)) {
@@ -246,6 +261,9 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
     else if (INTERFACE_MATCHES("wl_surface")) {
         if (opcode == 2) {
             fuzz.had_first_damage = 1;
+        }
+        else if (opcode == 3) { // frame
+            fuzz.frame_id = buf[2];
         }
         else if (opcode == 6 && fuzz.had_first_damage) {
             fuzz.displayed = 1;
@@ -320,6 +338,24 @@ static int wldbg_fuzz_send(struct wldbg_message *msg) {
     return 0;
 }
 
+static uint32_t get_timestamp() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    // compute millis in ts - fuzz.timestamp_start
+    long nanos, secs;
+
+    if (ts.tv_nsec < fuzz.timestamp_start.tv_nsec) {
+        ts.tv_nsec += NANOS_PER_SEC;
+        ts.tv_sec -= 1;
+    }
+
+    nanos = ts.tv_nsec - fuzz.timestamp_start.tv_nsec;
+    secs = ts.tv_sec - fuzz.timestamp_start.tv_sec;
+
+    return (secs * MILLIS_PER_SEC) + (nanos / NANOS_PER_MILLI);
+
+}
+
 static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsigned char pressed) {
     struct wldbg_message send_message;
     uint32_t buffer[6];
@@ -327,7 +363,7 @@ static int wldbg_fuzz_send_keyboard(struct wldbg *wldbg, unsigned int key, unsig
     buffer[0] = fuzz.keyboard_id;
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
-    buffer[3] = 0;
+    buffer[3] = get_timestamp();
     buffer[4] = key;
     buffer[5] = pressed;
 
@@ -346,7 +382,7 @@ static int wldbg_fuzz_send_button(struct wldbg *wldbg, unsigned int button, unsi
     buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 3;
     buffer[2] = ++(fuzz.serial_number);
-    buffer[3] = 0;
+    buffer[3] = get_timestamp();
     buffer[4] = button;
     buffer[5] = pressed;
 
@@ -419,7 +455,7 @@ static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
     uint32_t size = sizeof(buffer);
     buffer[0] = fuzz.pointer_id;
     buffer[1] = (size << 16) | 2;
-    buffer[2] = 0;
+    buffer[2] = get_timestamp();
     buffer[3] = real_x << 8;
     buffer[4] = real_y << 8;
 
@@ -437,8 +473,13 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
         clock_gettime(CLOCK_MONOTONIC, &ts);
 
         //TODO: this comparison is still wrong
-        if ((fuzz.delay.tv_sec + fuzz.last_msg_ts.tv_sec) > ts.tv_sec || (fuzz.delay.tv_nsec+fuzz.last_msg_ts.tv_nsec) > ts.tv_nsec) {
+        if ((fuzz.delay.tv_sec + fuzz.last_msg_ts.tv_sec) > ts.tv_sec) {
             return 0;
+        }
+        else if ((fuzz.delay.tv_sec + fuzz.last_msg_ts.tv_sec) == ts.tv_sec){
+            if ((fuzz.delay.tv_nsec + fuzz.last_msg_ts.tv_nsec) > ts.tv_nsec){
+                return 0;
+            }
         }
 
         struct event* event = &(fuzz.events[fuzz.event_idx]);
