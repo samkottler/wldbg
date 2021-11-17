@@ -302,7 +302,7 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
     uint32_t opcode = buf[1] & 0xffff;
 
     if (INTERFACE_MATCHES("wl_compositor")) {
-        if (opcode == 0) {
+        if (opcode == 0 && fuzz.surface_id == 0) {
             fuzz.surface_id = buf[2];
         }
     }
