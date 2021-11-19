@@ -57,10 +57,16 @@ add_pass(struct wldbg *wldbg, const char *name)
 
 	dbg("Adding pass '%s'\n", name);
 
-	pass = create_pass(name);
+    char* s = strdup(name);
+    int argc = 0;
+    const char* argv[64];
+    argv[argc++] = strtok(s, " ");
+    while ((argv[argc++] = strtok(NULL, " ")) != NULL) {}
+
+	pass = create_pass(argv[0]);
 	if (pass) {
 		/* XXX add arguments */
-		if (pass_init(wldbg, pass, 0, NULL) != 0) {
+		if (pass_init(wldbg, pass, argc-1, argv) != 0) {
 			fprintf(stderr, "Failed initializing pass '%s'\n",
 				name);
 			dealloc_pass(pass);
@@ -73,6 +79,7 @@ add_pass(struct wldbg *wldbg, const char *name)
 	} else {
 		fprintf(stderr, "Failed adding pass '%s'\n", name);
 	}
+	free(s);
 }
 
 static void
