@@ -118,6 +118,7 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
         printf("fuzzer needs an events file\n");
         return -1;
     }
+    wldbg->flags.fuzz_mode = 1;
 
     memset(&fuzz, 0, sizeof(fuzz));
 

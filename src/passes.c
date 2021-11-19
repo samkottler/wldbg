@@ -157,7 +157,11 @@ create_pass(const char *name)
 	/* hardcoded passes */
 	if (strcmp(name, "list") == 0) {
 		wldbg_pass = &wldbg_pass_list;
-	} else {
+	}
+	else if (strcmp(name, "fuzz") == 0) {
+        return create_fuzz_pass();
+    }
+	else {
 		/* try current directory */
 		if (build_path(path, "./", NULL, name) < 0)
 			return NULL;
@@ -318,12 +322,9 @@ load_passes(struct wldbg *wldbg, struct wldbg_options *opts,
 				dbg("\targ[%d]: %s\n", i, argv[argc - rest + i]);
 			}
 #endif
-            if (strncmp(argv[argc - rest], "fuzz", sizeof("fuzz")) == 0) {
-                wldbg->flags.fuzz_mode = 1;
-                pass = create_fuzz_pass();
-            } else {
-                pass = create_pass(argv[argc - rest]);
-            }
+
+            pass = create_pass(argv[argc - rest]);
+
 			if (pass) {
 				if (pass_init(wldbg, pass, count,
 						argv + argc - rest) != 0) {
