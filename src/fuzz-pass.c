@@ -392,7 +392,6 @@ static int wldbg_fuzz_send(struct wldbg_message *msg) {
         perror("wl_connection_flush");
         return -1;
     }
-    printf("%s\n", msg->connection->client.program);
     if  (fuzz.verbose) {
         wldbg_message_print(msg);
     }

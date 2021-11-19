@@ -157,11 +157,6 @@ filter_match(struct wl_list *filters, struct wldbg_message *message)
 static void
 process_message(struct wldbg_interactive *wldbgi, struct wldbg_message *message)
 {
-	/* print message's description
-	 * This is default behaviour. XXX add possibility to
-	 * turn it off */
-	wldbg_message_print(message);
-
 	if (wldbgi->stop) {
 		dbg("Stopped at message no. %lu from %s\n",
 			message->from == SERVER ?
@@ -318,6 +313,23 @@ interactive_init(struct wldbg *wldbg)
 	wl_list_init(&wldbgi->autocmds);
 
 	wldbgi->wldbg = wldbg;
+
+    pass = create_pass("dump");
+    if ( pass ) {
+        const char* argv[3];
+        argv[0] = "dump";
+        argv[1] = "human";
+        argv[2] = NULL;
+        if ( pass_init ( wldbg, pass, 2, argv ) != 0 ) {
+            dealloc_pass ( pass );
+        }
+
+        wl_list_insert ( wldbg->passes.next, &pass->link );
+        dbg ( "Pass '%s' loaded\n", argv[0] );
+    } else {
+        dbg ( "Loading pass 'dump' failed\n");
+        goto err_pass;
+    }
 
 	pass = alloc_pass("interactive");
 	if (!pass)
