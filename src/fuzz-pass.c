@@ -339,9 +339,9 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
 
     if (!(fuzz.ready_for_input) && fuzz.pointer_id && fuzz.keyboard_id && fuzz.displayed) {
         fuzz.ready_for_input = 1;
-        //wait 10 miliseconds to make sure everything is ready.
+        //wait 100 miliseconds to make sure everything is ready.
         clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_ts ));
-        fuzz.delay.tv_nsec = 10 * NANOS_PER_MILLI;
+        fuzz.delay.tv_nsec = 100 * NANOS_PER_MILLI;
     }
 
     for (int i = 0; i < sizeof(client_serials)/sizeof(struct serial_message); ++i) {
@@ -392,6 +392,7 @@ static int wldbg_fuzz_send(struct wldbg_message *msg) {
         perror("wl_connection_flush");
         return -1;
     }
+    printf("%s\n", msg->connection->client.program);
     if  (fuzz.verbose) {
         wldbg_message_print(msg);
     }
