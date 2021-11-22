@@ -138,8 +138,9 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
 
     FILE* fd = fopen(argv[argc-1], "r");
     if (!fd){
-        perror("fopen:");
-        return -1;
+        perror("fopen");
+        wldbg_exit(wldbg);
+        return 0;
     }
 
     int max_events = 128;
