@@ -319,6 +319,19 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
         return PASS_NEXT;
     }
 
+    if (fuzz.program_name) {
+        if (strcmp(message->connection->client.program, fuzz.program_name) == 0) {
+            fuzz.conn = message->connection;
+        }
+    }
+    else {
+        fuzz.conn = message->connection;
+    }
+
+    if (message->connection != fuzz.conn) {
+        return PASS_NEXT;
+    }
+
     uint32_t *buf = message->data;
     uint32_t opcode = buf[1] & 0xffff;
 
