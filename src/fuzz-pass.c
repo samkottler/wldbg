@@ -113,6 +113,8 @@ static uint32_t buttons[] = {
     731, 732, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 743
 };
 
+typedef void (*generate_f)();
+
 static struct {
     struct timespec timestamp_start;
     uint32_t serial_number;
@@ -142,6 +144,7 @@ static struct {
     uint32_t verbose;
     char* program_name;
     struct wldbg_connection *conn;
+    generate_f event_genarator;
 } fuzz;
 
 static void print_usage(void *user_data) {
@@ -156,6 +159,7 @@ static void print_usage(void *user_data) {
            "    program=<name>  -- only send messages to connections with client program matching name\n"
            "    delay_min=<min> -- minimum delay between events in milliseconds (default 10)\n"
            "    delay_max=<max> -- maximum delay between events in milliseconds (default 1000)\n"
+           "    inconsistent    -- don't restrict to a consistent sequence of events\n"
     );
 }
 
@@ -179,7 +183,7 @@ static void generate_consistent_event() {
     switch (rand()%number_events) {
         case 0:
             fuzz.next_event.type = KEY;
-            uint32_t key_idx = rand() % sizeof(keys)/sizeof(*keys);
+            uint32_t key_idx = rand() % (sizeof(keys)/sizeof(*keys));
             fuzz.next_event.key.key_code = keys[key_idx];
             fuzz.events.key_status[key_idx] = 1 - fuzz.events.key_status[key_idx];
             fuzz.next_event.key.pressed = fuzz.events.key_status[key_idx];
@@ -202,13 +206,47 @@ static void generate_consistent_event() {
             break;
         case 3:
             fuzz.next_event.type = MOUSE_BUTTON;
-            uint32_t button_idx = rand() % sizeof(buttons)/sizeof(*buttons);
+            uint32_t button_idx = rand() % (sizeof(buttons)/sizeof(*buttons));
             fuzz.next_event.mouse_button.button_code = buttons[button_idx];
             fuzz.events.button_status[button_idx] = 1 - fuzz.events.button_status[button_idx];
             fuzz.next_event.mouse_button.pressed = fuzz.events.button_status[button_idx];
             break;
     }
+}
 
+static void generate_inconsistent_event() {
+    unsigned long millis = (rand() % (fuzz.delay_max - fuzz.delay_min)) + fuzz.delay_min;
+    fuzz.next_event.delay.tv_nsec = (millis % MILLIS_PER_SEC) * NANOS_PER_MILLI;
+    fuzz.next_event.delay.tv_sec = millis / MILLIS_PER_SEC;
+    switch (rand()%4) {
+        case 0:
+            fuzz.next_event.type = KEY;
+            uint32_t key_idx = rand() % (sizeof(keys)/sizeof(*keys));
+            fuzz.next_event.key.key_code = keys[key_idx];
+            fuzz.next_event.key.pressed = rand() % 2;
+            break;
+        case 1:
+            if (rand() % 2) {
+                fuzz.next_event.type = MOUSE_LEAVE;
+            }
+            else {
+                fuzz.next_event.type = MOUSE_ENTER;
+                fuzz.next_event.mouse_enter.x = ((float)rand()) / (float)RAND_MAX;
+                fuzz.next_event.mouse_enter.y = ((float)rand()) / (float)RAND_MAX;
+            }
+            break;
+        case 2:
+            fuzz.next_event.type = MOUSE_MOVE;
+            fuzz.next_event.mouse_move.x = ((float)rand()) / (float)RAND_MAX;
+            fuzz.next_event.mouse_move.y = ((float)rand()) / (float)RAND_MAX;
+            break;
+        case 3:
+            fuzz.next_event.type = MOUSE_BUTTON;
+            uint32_t button_idx = rand() % (sizeof(buttons)/sizeof(*buttons));
+            fuzz.next_event.mouse_button.button_code = buttons[button_idx];
+            fuzz.next_event.mouse_button.pressed = rand() % 2;
+            break;
+    }
 }
 
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
@@ -222,6 +260,7 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
 
     fuzz.delay_min = 10;
     fuzz.delay_max = 1000;
+    fuzz.event_genarator = generate_consistent_event;
 
     for (int i = 1; i < argc - 1; ++i) {
         if (strcmp(argv[i], "block") == 0) {
@@ -244,6 +283,9 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
         else if (strncmp(argv[i], "delay_max=", 10) == 0) {
             fuzz.delay_max = atoi(argv[i] + 10);
         }
+        else if (strcmp(argv[i], "inconsistent") == 0) {
+            fuzz.event_genarator = generate_inconsistent_event;
+        }
         else {
             printf("invalid option: %s\n", argv[i]);
             wldbg_exit(wldbg);
@@ -253,7 +295,7 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
     unsigned int seed = hash(argv[argc-1]) & 0xffffffff;
     srand(seed);
 
-    generate_consistent_event();
+    fuzz.event_genarator();
 
     pass->user_data = wldbg;
     return 0;
@@ -653,7 +695,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
         }
 
         fuzz.delay = event->delay;
-        generate_consistent_event();
+        fuzz.event_genarator();
 
         clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_ts ));
     }
