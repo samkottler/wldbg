@@ -77,6 +77,42 @@ static struct serial_message client_serials[] = {
 // to 64 in a ring queue
 #define NUM_SYNC_IDS 64
 
+static uint32_t keys[] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98,
+    99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
+    118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+    137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155,
+    156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174,
+    175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193,
+    194, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217,
+    218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236,
+    237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 352, 353, 354, 355, 356, 357, 358,
+    359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377,
+    378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396,
+    397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415,
+    416, 417, 418, 419, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429, 430, 431, 432, 433, 434,
+    435, 436, 437, 438, 439, 440, 441, 442, 444, 445, 446, 448, 449, 450, 451, 464, 465, 466, 467,
+    468, 469, 470, 471, 472, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482, 483, 484, 485, 497,
+    498, 499, 500, 501, 502, 503, 504, 505, 506, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521,
+    522, 523, 524, 525, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 540,
+    541, 542, 560, 561, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 592, 593, 608, 609, 610,
+    611, 612, 613, 614, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 625, 626, 627, 628, 629,
+    630, 631, 632, 633, 634, 656, 657, 658, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669,
+    670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 688, 689, 690,
+    691, 692, 693, 696, 697, 698, 699, 700, 767
+};
+static uint32_t buttons[] = {
+    256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 272, 273, 274, 275, 276, 277, 278, 279, 288,
+    289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 303, 304, 305, 306, 307, 308, 309, 310,
+    311, 312, 313, 314, 315, 316, 317, 318, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
+    331, 332, 333, 334, 335, 336, 337, 544, 545, 546, 547, 704, 705, 706, 707, 708, 709, 710, 711,
+    712, 713, 714, 715, 716, 717, 718, 719, 720, 721, 722, 723, 724, 725, 726, 727, 728, 729, 730,
+    731, 732, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 743
+};
+
 static struct {
     struct timespec timestamp_start;
     uint32_t serial_number;
@@ -85,9 +121,14 @@ static struct {
     uint32_t keyboard_id;
     struct timespec last_msg_ts;
     struct timespec delay;
-    uint32_t num_events;
-    uint32_t event_idx;
-    struct event* events;
+    struct event next_event;
+    struct {
+        unsigned char key_status[sizeof (keys)/sizeof(*keys)];
+        unsigned char button_status[sizeof (buttons)/sizeof(*buttons)];
+        unsigned char mouse_entered;
+    } events;
+    uint32_t delay_min;
+    uint32_t delay_max;
     uint32_t had_first_damage;
     uint32_t displayed;
     uint32_t ready_for_input;
@@ -106,7 +147,7 @@ static struct {
 static void print_usage(void *user_data) {
     printf("Perform fuzz testing\n"
            "\n"
-           "Usage: wldbg fuzz [options] <eventlist filename> ...\n"
+           "Usage: wldbg fuzz [options] <seed> ...\n"
            "\n"
            "Available options:\n"
            "    block           -- prevent real keyboard and mouse events from being sent\n"
@@ -116,16 +157,68 @@ static void print_usage(void *user_data) {
     );
 }
 
+// string hash function djb2 developed by dan bernstein
+static unsigned long hash(const char* str) {
+    unsigned long hash = 5381;
+    int c;
+
+    while ((c = *(str++))) {
+        hash = ((hash << 5) + hash) ^ c; /* (hash * 33) ^ c */
+    }
+
+    return hash;
+}
+
+static void generate_consistent_event() {
+    unsigned long millis = (rand() % (fuzz.delay_max - fuzz.delay_min)) + fuzz.delay_min;
+    fuzz.next_event.delay.tv_nsec = (millis % MILLIS_PER_SEC) * NANOS_PER_MILLI;
+    fuzz.next_event.delay.tv_sec = millis / MILLIS_PER_SEC;
+    int number_events = fuzz.events.mouse_entered ? 4 : 2;
+    switch (rand()%number_events) {
+        case 0:
+            fuzz.next_event.type = KEY;
+            uint32_t key_idx = rand() % sizeof(keys)/sizeof(*keys);
+            fuzz.next_event.key.key_code = keys[key_idx];
+            fuzz.events.key_status[key_idx] = 1 - fuzz.events.key_status[key_idx];
+            fuzz.next_event.key.pressed = fuzz.events.key_status[key_idx];
+            break;
+        case 1:
+            if (fuzz.events.mouse_entered) {
+                fuzz.next_event.type = MOUSE_LEAVE;
+            }
+            else {
+                fuzz.next_event.type = MOUSE_ENTER;
+                fuzz.next_event.mouse_enter.x = ((float)rand()) / (float)RAND_MAX;
+                fuzz.next_event.mouse_enter.y = ((float)rand()) / (float)RAND_MAX;
+            }
+            fuzz.events.mouse_entered = 1 - fuzz.events.mouse_entered;
+            break;
+        case 2:
+            fuzz.next_event.type = MOUSE_MOVE;
+            fuzz.next_event.mouse_move.x = ((float)rand()) / (float)RAND_MAX;
+            fuzz.next_event.mouse_move.y = ((float)rand()) / (float)RAND_MAX;
+            break;
+        case 3:
+            fuzz.next_event.type = MOUSE_BUTTON;
+            uint32_t button_idx = rand() % sizeof(buttons)/sizeof(*buttons);
+            fuzz.next_event.mouse_button.button_code = buttons[button_idx];
+            fuzz.events.button_status[button_idx] = 1 - fuzz.events.button_status[button_idx];
+            fuzz.next_event.mouse_button.pressed = fuzz.events.button_status[button_idx];
+            break;
+    }
+
+}
+
 static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, const char *argv[]) {
     if (argc < 2) {
-        printf("fuzzer needs an events file\n");
+        printf("fuzzer needs a random seed\n");
         return -1;
     }
     wldbg->flags.fuzz_mode = 1;
 
     memset(&fuzz, 0, sizeof(fuzz));
 
-    for (int i = 1; i < argc; ++i) {
+    for (int i = 1; i < argc - 1; ++i) {
         if (strcmp(argv[i], "block") == 0) {
             fuzz.block_events = 1;
         }
@@ -137,95 +230,22 @@ static int fuzz_init(struct wldbg *wldbg, struct wldbg_pass *pass, int argc, con
         else if (strcmp(argv[i], "verbose") == 0) {
             fuzz.verbose = 1;
         }
-        else if (strcmp(argv[i], "program") == 0 && (++i) < argc) {
+        else if (strcmp(argv[i], "program") == 0 && (++i) < argc-1) {
             fuzz.program_name = strdup(argv[i]);
         }
+        else {
+            printf("invalid option: %s\n", argv[i]);
+            wldbg_exit(wldbg);
+        }
     }
 
-    FILE* fd = fopen(argv[argc-1], "r");
-    if (!fd){
-        perror("fopen");
-        wldbg_exit(wldbg);
-        return 0;
-    }
+    unsigned int seed = hash(argv[argc-1]) & 0xffffffff;
+    srand(seed);
 
-    int max_events = 128;
-    fuzz.events = malloc(max_events * sizeof(struct event));
-    if (!fuzz.events) {
-        fclose(fd);
-        return -1;
-    }
+    fuzz.delay_min = 10;
+    fuzz.delay_max = 1000;
+    generate_consistent_event();
 
-    char* line = NULL;
-    size_t len = 0;
-    fuzz.num_events = 0;
-    int serial;
-    unsigned long millis;
-    int line_num = 0;
-    while (getline(&line, &len, fd) > 0) {
-        ++line_num;
-        if (line[0] == '#') {
-            continue;
-        }
-
-        if (fuzz.num_events == max_events) {
-            max_events *= 2;
-            fuzz.events = realloc(fuzz.events, max_events*sizeof(struct event));
-            if (!fuzz.events) {
-                fclose(fd);
-                return -1;
-            }
-        }
-
-        struct event *event = &(fuzz.events[fuzz.num_events]);
-        if (strncmp(line, "KEY", 3) == 0){
-            event->type = KEY;
-            if (sscanf(line + 4, "%d,%ld,%d,%d\n", &serial, &millis, &(event->key.key_code), &(event->key.pressed)) < 4) {
-                printf("Error on line %d of %s\n", line_num, argv[argc-1]);
-                fclose(fd);
-                return -1;
-            }
-        }
-        if (strncmp(line, "MOTION", 6) == 0) {
-            event->type = MOUSE_MOVE;
-            if (sscanf(line + 7, "%ld,%f,%f\n", &millis, &(event->mouse_move.x), &(event->mouse_move.y)) < 3) {
-                printf("Error on line %d of %s\n", line_num, argv[argc-1]);
-                fclose(fd);
-                return -1;
-            }
-        }
-        if (strncmp(line, "BUTTON", 6) == 0) {
-            if (sscanf(line + 7, "%d,%ld,%d,%d\n", &serial, &millis, &(event->mouse_button.button_code), &(event->mouse_button.pressed)) < 4) {
-                printf("Error on line %d of %s\n", line_num, argv[argc-1]);
-                fclose(fd);
-                return -1;
-            }
-            event->type = MOUSE_BUTTON;
-        }
-        if (strncmp(line, "ENTER", 5) == 0) {
-            if (sscanf(line + 6, "%ld,%f,%f\n", &millis, &(event->mouse_enter.x), &(event->mouse_enter.y)) < 3) {
-                printf("Error on line %d of %s\n", line_num, argv[argc-1]);
-                fclose(fd);
-                return -1;
-            }
-            event->type = MOUSE_ENTER;
-        }
-        if (strncmp(line, "LEAVE", 5) == 0) {
-            if (sscanf(line + 6, "%ld\n", &millis) < 1) {
-                printf("Error on line %d of %s\n", line_num, argv[argc-1]);
-                fclose(fd);
-                return -1;
-            }
-            event->type = MOUSE_LEAVE;
-        }
-
-        event->delay.tv_sec = millis/MILLIS_PER_SEC;
-        event->delay.tv_nsec = (millis % MILLIS_PER_SEC) * NANOS_PER_MILLI;
-        fuzz.num_events ++;
-    }
-    free(line);
-
-    fclose(fd);
     pass->user_data = wldbg;
     return 0;
 }
@@ -394,7 +414,6 @@ static int fuzz_out(void *user_data, struct wldbg_message *message) {
 }
 
 static void fuzz_destroy(void *user_data) {
-    free(fuzz.events);
     if (fuzz.program_name) {
         free(fuzz.program_name);
     }
@@ -565,7 +584,7 @@ static int wldbg_fuzz_pointer_motion(struct wldbg* wldbg, float x, float y) {
 }
 
 int wldbg_fuzz_send_next(struct wldbg *wldbg) {
-    if (fuzz.ready_for_input && fuzz.event_idx < fuzz.num_events) {
+    if (fuzz.ready_for_input) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
 
@@ -579,7 +598,7 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
             }
         }
 
-        struct event* event = &(fuzz.events[fuzz.event_idx]);
+        struct event* event = &(fuzz.next_event);
         switch (event->type) {
             case KEY:
                 uint32_t pressed = event->key.pressed;
@@ -624,8 +643,8 @@ int wldbg_fuzz_send_next(struct wldbg *wldbg) {
                 break;
         }
 
-        fuzz.event_idx ++;
         fuzz.delay = event->delay;
+        generate_consistent_event();
 
         clock_gettime(CLOCK_MONOTONIC, &(fuzz.last_msg_ts ));
     }
